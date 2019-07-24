@@ -1,7 +1,3 @@
-/*
-	ES5 Compatible module & resource loader
-*/
-
 var resource = function() {
 
 	"use strict";
@@ -43,7 +39,7 @@ var resource = function() {
 			break;
 		}
 
-	if (fill && length !== NaN && length > argument.length) {
+		if (fill && length !== NaN && length > argument.length) {
 			return fill.repeat(length - argument.length) + argument;
 		} else {
 			return argument;
@@ -89,78 +85,210 @@ var resource = function() {
 	}
 
 	function log() {
-		console.log(format_string.apply(null,arguments));
+		console.log(format_string.apply(undefined,arguments));
 	}
 
 	function warn() {
-		console.warn(format_string.apply(null,arguments));
+		console.warn(format_string.apply(undefined,arguments));
 	}
 
 	function error() {
-		throw format_string.apply(null,arguments);
+		throw format_string.apply(undefined,arguments);
 	}
 
-	function _class() {
-		
-	}
-
-	function class_extends() {
-		
-	}
-
-	function safe_function() {
-
-	}
-
-	function safe_class() {
-
-	}
-
-	function safe_class_extends() {
-		
-	}
-
-	function _import() {
-		if (!arguments.length) {
-			error("import, no arguments provided");
-		}
-
-		var reload = false;
-
-		for (var i = 0; i < arguments.length - 1; ++i) {
-			var key = arguments[i];
-
-			if (typeof(key) !== "string") {
-				error("import, argument '%d' must be a string",i);
-			} else if (key === "reload") {
-				reload = true;
-			} else {
-				reload = false;
-			}
-		}
-		
-		var callback = arguments[i];
-		
-		if (typeof(callback) !== "function") {
-			error("import, last argument must be a function");
+	function ajax_onreadystatechange(callback) {
+		if (this.readyState === 4) {
+			callback(this.status,this.response);
 		}
 	}
 
-	function define() {
-		
+	function ajax(method,mime_type,url,data,callback) {
+		var request = new XMLHttpRequest();
+
+		request.onreadystatechange = ajax_onreadystatechange.bind(request,callback);
+		request.overrideMimeType(mime_type);
+		request.open(method,url,true);
+		request.send(data);
+
+		return request;
 	}
 	
+	function Resource_Node(path,request) {
+		this.path = path;
+		this.request = request;
+		this.dependancies = [];
+		this.dependants = 1;
+		this.blob = undefined;
+		this.data = undefined;
+		this.callback = undefined;
+	}
+
+	var node_map = {};
+
+	function Resource_Request(paths,callback) {
+		this.paths = paths;
+		this.callback = callback;
+	}
+
+	var active_requests = [];
+
+	function check_request_done(request) {
+		for (var i = 0; i < request.paths.length; ++i) {
+			if (!node_map[request.paths[i]].data) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	function get_request_dependancies(request) {
+		if (!request.paths.length) {
+			return undefined;
+		}
+
+		var dependancies = [];
+		    dependancies.length = request.paths.length;
+
+		for (var i = 0; i < request.paths.length; ++i) {
+			dependancies[i] = node_map[request.paths[i]].data;
+		}
+
+		return dependancies;
+	}
+
+	function check_active_requests() {
+		for (var i = 0; i < active_requests.length; ++i) {
+			var request = active_requests[i];
+			
+			if (check_request_done(request)) {
+				active_requests[i] = active_requests[active_requests.length - 1];
+				active_requests.pop();
+				request.callback.apply(undefined,get_request_dependancies(request));
+			}
+		}
+	}
+
+	var can_define_module_node = undefined;
+
+	function on_module_defined(node,dependancies) {
+		node.data = node.callback.apply(node,dependancies);
+		check_active_requests();
+	}
+
+	function on_module_code_loaded(path,status,code) {
+		if (status !== 200) {
+			error("failed to load module '%s'",path);
+		}
+
+		var node = node_map[path];
+
+		node.blob = new Blob([code],{mime: "text/plain"});
+		can_define_module_node = node;
+		
+		var script = document.createElement("script");
+
+		script.src = URL.createObjectURL(node.blob);
+
+		document.head.appendChild(script);
+	}
+
+	function create_module_node(path) {
+		node_map[path] = new Resource_Node(
+			path,
+			ajax(
+				"GET",
+				"text/plain",
+				path,
+				undefined,
+				on_module_code_loaded.bind(undefined,path)
+			)
+		);
+	}
+	
+	var import_type_regex = new RegExp("\\.([a-zA-Z0-9_]+)$","");
+
+	function _import_(paths,callback) {
+		var processed_paths = [];
+		
+		for (var i = 0; i < paths.length; ++i) {
+			var path = paths[i];
+			var type = undefined;
+		
+			switch(path) {
+				case "text":
+				case "json":
+				case "image":
+				case "audio":
+				case "video":
+				case "css":
+				case "module":
+					type = path;
+
+					if (++i >= paths.length) {
+						error("missing arguments");
+					}
+
+					path = paths[i];
+				break;
+			}
+			
+			var match = path.match(import_type_regex);
+
+			if (match) {
+				switch(match[1]) {
+					case "js": type = "module"; break;
+				}
+			} else {
+				type = "module";
+				path += ".js";
+				paths[i] = path;
+			}
+
+			processed_paths.push(path);
+			var node = node_map[path];
+
+			if (node) {
+				++node.dependants;
+			} else {
+				switch(type) {
+					case "text": break;
+					case "json": break;
+					case "image": break;
+					case "audio": break;
+					case "video": break;
+					case "css": break;
+					case "module": create_module_node(path); break;
+					default: break;
+				}
+			}
+		}
+
+		active_requests.push(new Resource_Request(processed_paths,callback));
+	}
+
+	function define(paths,callback) {
+		if (!can_define_module_node) {
+			error("Cannot define module");
+		}
+
+		var node = can_define_module_node;
+
+		node.dependancies = paths;
+		node.callback = callback;
+		can_define_module_node = undefined;
+
+		_import_(paths,on_module_defined.bind(undefined,node));
+		check_active_requests();
+	}
+
 	return {
 		format_string: format_string,
 		log: log,
 		warn: warn,
 		error: error,
-		class: _class,
-		class_extends: class_extends,
-		safe_function: safe_function,
-		safe_class: safe_class,
-		safe_class_extends: safe_class_extends,
-		import: _import,
+		ajax: ajax,
+		import: _import_,
 		define: define
 	};
 
