@@ -1,3 +1,11 @@
+/*
+	todo:
+		- finish class_extends
+		- specify main through attribute
+		- enable code inspection through attribute
+		- enable cyclic dependency checks through attribute
+*/
+
 var resource = function() {
 
 	"use strict";
@@ -118,10 +126,43 @@ var resource = function() {
 		return request;
 	}
 
+	function _class_(constructor,prototype,properties) {
+		if (properties) {
+			for (var property in properties) {
+				constructor[property] = properties[property];
+			}
+		}
+		
+		constructor.super = null;
+		prototype.super = null;
+		constructor.prototype = prototype;
+
+		return constructor;
+	}
+
+	function class_extends(base,constructor,prototype,properties) {
+		if (typeof(base) === "array") {
+			for (var i = 0; i < base.length; ++i) {
+				var base_prototype = base[i].prototype;
+
+				for (var property in base_prototype) {
+					if (prototype[property] === undefined) {
+						prototype[property] = base_prototype[property];
+					}
+				}
+			}
+		} else {
+			for (var property in base.prototype) {
+				if (
+			}
+		}
+	}
+
 	function Resource_Node(url,get) {
 		this.url = url;
 		this.get = get;
 		this.type = null;
+		this.callback = null;
 		this.status = false;
 		this.export = null;
 		this.dependencies = [];
@@ -136,6 +177,11 @@ var resource = function() {
 	}
 
 	var resource_active_requests = [];
+	
+	function pop_active_request(i) {
+		resource_active_requests[i] = resource_active_requests[resource_active_requests.length - 1];
+		resource_active_requests.pop();
+	}
 
 	function finish_active_request(request) {
 		var exports = [];
@@ -152,11 +198,6 @@ var resource = function() {
 		request.callback.apply(null,exports);
 	}
 
-	function pop_active_request(i) {
-		resource_active_requests[i] = resource_active_requests[resource_active_requests.length - 1];
-		resource_active_requests.pop();
-	}
-
 	function check_active_requests() {
 		check_active_requests_loop:
 		for (var i = 0; i < resource_active_requests.length; ++i) {
@@ -171,8 +212,8 @@ var resource = function() {
 				}
 			}
 
-			finish_active_request(request);
 			pop_active_request(i--);
+			finish_active_request(request);
 		}
 	}
 
@@ -297,6 +338,67 @@ var resource = function() {
 		return node;
 	}
 
+	function on_js_module_request_done() {
+		this.status = true;
+		this.export = this.callback.apply(null,arguments);
+
+		check_active_requests();
+	}
+
+	var next_module_node_urls = null;
+	var next_module_node_callback = null;
+
+	function define(urls,callback) {
+		next_module_node_urls = urls;
+		next_module_node_callback = callback;
+	}
+
+	function on_js_module_define_done(node) {
+		if (!next_module_node_urls
+		||  !next_module_node_callback)
+		{
+			error("Improper module definition for '%s'",node.url);
+		}
+
+		node.dependencies = next_module_node_urls;
+		node.callback = next_module_node_callback;
+
+		_import_(
+			next_module_node_urls,
+			on_js_module_request_done.bind(node)
+		);
+	}
+
+	function on_js_module_code_loaded(node,code) {
+		if (!code) {
+			error("couldn't load js module '%s'",node.url);
+		}
+
+		var blob = new Blob([code],{ type: "text/javascript" });
+		var tag = document.createElement("script");
+
+		tag.type = "text/javascript";
+		tag.onload = on_js_module_define_done.bind(null,node);
+		tag.src = URL.createObjectURL(blob);
+
+		document.head.append(tag);
+	}
+
+	function create_js_module_node(url) {
+		var node = new Resource_Node(url,get_export);
+
+		ajax(
+			"GET",
+			"text/plain; charset=utf-8",
+			"text",
+			url,
+			null,
+			on_js_module_code_loaded.bind(null,node)
+		);
+
+		return node;
+	}
+
 	var import_type_regex = new RegExp("\\.([a-zA-Z0-9_]+)$","");
 	var import_types = {
 		"text": {extensions: ["txt"], create_node: create_text_node},
@@ -306,7 +408,7 @@ var resource = function() {
 		"video": {extensions: ["mp4","avi"], create_node: create_blob_node.bind(null,"video")},
 		"css": {extensions: ["css"], create_node: create_css_node},
 		"slc_module": {extensions: ["slc"], create_node: null},
-		"js_module": {extensions: ["js"], create_node: null}
+		"js_module": {extensions: ["js"], create_node: create_js_module_node}
 	};
 
 	function _import_(urls,callback) {
@@ -327,7 +429,7 @@ var resource = function() {
 				var match = url.match(import_type_regex);
 
 				if (match) {
-					var extension = match[1];
+					var extension = match[1].toLowerCase();
 
 					import_types_loop:
 					for (var import_type_key in import_types) {
@@ -362,16 +464,14 @@ var resource = function() {
 		resource_active_requests.push(new Resource_Request(pure_urls,callback));
 	}
 
-	function define(paths,callback) {
-		
-	}
-
 	return {
 		format_string: format_string,
 		log: log,
 		warn: warn,
 		error: error,
 		ajax: ajax,
+		class: _class_,
+		class_extends: class_extends,
 		import: _import_,
 		define: define
 	};
