@@ -98,188 +98,272 @@ var resource = function() {
 
 	function ajax_onreadystatechange(callback) {
 		if (this.readyState === 4) {
-			callback(this.status,this.response);
+			if (this.status === 200) {
+				callback(this.response);
+			} else {
+				callback(null);
+			}
 		}
 	}
 
-	function ajax(method,mime_type,url,data,callback) {
+	function ajax(method,mime_type,response_type,url,data,callback) {
 		var request = new XMLHttpRequest();
 
 		request.onreadystatechange = ajax_onreadystatechange.bind(request,callback);
+		request.responseType = response_type;
 		request.overrideMimeType(mime_type);
 		request.open(method,url,true);
 		request.send(data);
 
 		return request;
 	}
+
+	function Resource_Node(url,get) {
+		this.url = url;
+		this.get = get;
+		this.type = null;
+		this.status = false;
+		this.export = null;
+		this.dependencies = [];
+		this.dependants = 0;
+	}
+
+	var resource_node_graph = {};
 	
-	function Resource_Node(path,request) {
-		this.path = path;
-		this.request = request;
-		this.dependancies = [];
-		this.dependants = 1;
-		this.blob = undefined;
-		this.data = undefined;
-		this.callback = undefined;
+	function Resource_Request(urls,callback) {
+		this.urls = urls;
+		this.callback = callback
 	}
 
-	var node_map = {};
+	var resource_active_requests = [];
 
-	function Resource_Request(paths,callback) {
-		this.paths = paths;
-		this.callback = callback;
-	}
+	function finish_active_request(request) {
+		var exports = [];
+		var urls = request.urls;
 
-	var active_requests = [];
+		for (var i = 0; i < urls.length; ++i) {
+			var _export_ = resource_node_graph[urls[i]].get();
 
-	function check_request_done(request) {
-		for (var i = 0; i < request.paths.length; ++i) {
-			if (!node_map[request.paths[i]].data) {
-				return false;
+			if (_export_) {
+				exports.push(_export_);
 			}
 		}
 
-		return true;
+		request.callback.apply(null,exports);
 	}
 
-	function get_request_dependancies(request) {
-		if (!request.paths.length) {
-			return undefined;
-		}
-
-		var dependancies = [];
-		    dependancies.length = request.paths.length;
-
-		for (var i = 0; i < request.paths.length; ++i) {
-			dependancies[i] = node_map[request.paths[i]].data;
-		}
-
-		return dependancies;
+	function pop_active_request(i) {
+		resource_active_requests[i] = resource_active_requests[resource_active_requests.length - 1];
+		resource_active_requests.pop();
 	}
 
 	function check_active_requests() {
-		for (var i = 0; i < active_requests.length; ++i) {
-			var request = active_requests[i];
-			
-			if (check_request_done(request)) {
-				active_requests[i] = active_requests[active_requests.length - 1];
-				active_requests.pop();
-				request.callback.apply(undefined,get_request_dependancies(request));
+		check_active_requests_loop:
+		for (var i = 0; i < resource_active_requests.length; ++i) {
+			var request = resource_active_requests[i];
+			var urls = request.urls;
+
+			for (var j = 0; j < urls.length; ++j) {
+				var node = resource_node_graph[urls[j]];
+
+				if (!node.status) {
+					continue check_active_requests_loop;
+				}
 			}
+
+			finish_active_request(request);
+			pop_active_request(i--);
 		}
 	}
 
-	var can_define_module_node = undefined;
+	function get_export() {
+		return this.export;
+	}
 
-	function on_module_defined(node,dependancies) {
-		node.data = node.callback.apply(node,dependancies);
+	function on_text_loaded(node,text) {
+		if (!text) {
+			error("couldn't load text '%s'",node.url);
+		}
+
+		node.status = true;
+		node.export = text;
+
 		check_active_requests();
 	}
 
-	function on_module_code_loaded(path,status,code) {
-		if (status !== 200) {
-			error("failed to load module '%s'",path);
-		}
+	function create_text_node(url) {
+		var node = new Resource_Node(url,get_export);
 
-		var node = node_map[path];
-
-		node.blob = new Blob([code],{mime: "text/plain"});
-		can_define_module_node = node;
-		
-		var script = document.createElement("script");
-
-		script.src = URL.createObjectURL(node.blob);
-
-		document.head.appendChild(script);
-	}
-
-	function create_module_node(path) {
-		node_map[path] = new Resource_Node(
-			path,
-			ajax(
-				"GET",
-				"text/plain",
-				path,
-				undefined,
-				on_module_code_loaded.bind(undefined,path)
-			)
+		ajax(
+			"GET",
+			"text/plain; charset=utf-8",
+			"text",
+			url,
+			null,
+			on_text_loaded.bind(null,node)
 		);
+
+		return node;
 	}
-	
-	var import_type_regex = new RegExp("\\.([a-zA-Z0-9_]+)$","");
 
-	function _import_(paths,callback) {
-		var processed_paths = [];
-		
-		for (var i = 0; i < paths.length; ++i) {
-			var path = paths[i];
-			var type = undefined;
-		
-			switch(path) {
-				case "text":
-				case "json":
-				case "image":
-				case "audio":
-				case "video":
-				case "css":
-				case "module":
-					type = path;
+	function get_json_export() {
+		return JSON.parse(this.export);
+	}
 
-					if (++i >= paths.length) {
-						error("missing arguments");
-					}
-
-					path = paths[i];
-				break;
-			}
-			
-			var match = path.match(import_type_regex);
-
-			if (match) {
-				switch(match[1]) {
-					case "js": type = "module"; break;
-				}
-			} else {
-				type = "module";
-				path += ".js";
-				paths[i] = path;
-			}
-
-			processed_paths.push(path);
-			var node = node_map[path];
-
-			if (node) {
-				++node.dependants;
-			} else {
-				switch(type) {
-					case "text": break;
-					case "json": break;
-					case "image": break;
-					case "audio": break;
-					case "video": break;
-					case "css": break;
-					case "module": create_module_node(path); break;
-					default: break;
-				}
-			}
+	function on_json_loaded(node,json) {
+		if (!json) {
+			error("couldn't load json '%s'",node.url);
 		}
 
-		active_requests.push(new Resource_Request(processed_paths,callback));
+		node.status = true;
+		node.export = json;
+
+		check_active_requests();
+	}
+
+	function create_json_node(url) {
+		var node = new Resource_Node(url,get_json_export);
+
+		ajax(
+			"GET",
+			"text/plain; charset=utf-8",
+			"text",
+			url,
+			null,
+			on_json_loaded.bind(null,node)
+		);
+
+		return node;
+	}
+
+	function get_blob_export() {
+		var tag = document.createElement(this.type);
+
+		tag.src = this.export;
+		
+		return tag;
+	}
+
+	function on_blob_loaded(node,blob) {
+		if (!blob) {
+			error("couldn't load blob '%s'",node.url);
+		}
+
+		node.status = true;
+		node.export = URL.createObjectURL(blob);
+
+		check_active_requests();
+	}
+
+	function create_blob_node(type,url) {
+		var node = new Resource_Node(url,get_blob_export);
+		node.type = type;
+
+		ajax(
+			"GET",
+			"*/*",
+			"blob",
+			url,
+			null,
+			on_blob_loaded.bind(null,node)
+		);
+
+		return node;
+	}
+
+	function on_css_loaded(node,css) {
+		if (!css) {
+			error("couldn't load css '%s'",node.url);
+		}
+
+		node.status = true;
+		node.export = null;
+
+		check_active_requests();
+	}
+
+	function create_css_node(url) {
+		var node = new Resource_Node(url,get_export);
+		var tag = document.createElement("link");
+
+		tag.rel = "stylesheet";
+		tag.type = "text/css";
+		tag.href = url;
+		tag.onload = on_css_loaded.bind(null,node,true);
+		tag.onerror = on_css_loaded.bind(null,node,false);
+
+		document.head.append(tag);
+
+		return node;
+	}
+
+	var import_type_regex = new RegExp("\\.([a-zA-Z0-9_]+)$","");
+	var import_types = {
+		"text": {extensions: ["txt"], create_node: create_text_node},
+		"json": {extensions: ["json"], create_node: create_json_node},
+		"image": {extensions: ["bmp","png","gif","jpeg","jpg"], create_node: create_blob_node.bind(null,"img")},
+		"audio": {extensions: ["mp3","ogg","wav"], create_node: create_blob_node.bind(null,"audio")},
+		"video": {extensions: ["mp4","avi"], create_node: create_blob_node.bind(null,"video")},
+		"css": {extensions: ["css"], create_node: create_css_node},
+		"slc_module": {extensions: ["slc"], create_node: null},
+		"js_module": {extensions: ["js"], create_node: null}
+	};
+
+	function _import_(urls,callback) {
+		if (!urls.length) {
+			callback();
+			return;
+		}
+
+		var pure_urls = [];
+
+		for (var i = 0; i < urls.length; ++i) {
+			var url = urls[i];
+			var type = import_types[url];
+
+			if (type) {
+				url = urls[++i];
+			} else {
+				var match = url.match(import_type_regex);
+
+				if (match) {
+					var extension = match[1];
+
+					import_types_loop:
+					for (var import_type_key in import_types) {
+						var import_type = import_types[import_type_key];
+						var extensions = import_type.extensions;
+
+						for (var j = 0; j < extensions.length; ++j) {
+							if (extension === extensions[j]) {
+								type = import_type;
+								break import_types_loop;
+							}
+						}
+						
+					}
+				} else {
+					url += ".js";
+					type = import_types["js_module"];
+				}
+			}
+
+			if (!url) {
+				error("Missing import URL");
+			} else if (!type) {
+				error("Unsupported import type");
+			} else if (!resource_node_graph[url]) {
+				resource_node_graph[url] = type.create_node(url);
+			}
+
+			pure_urls.push(url);
+		}
+
+		resource_active_requests.push(new Resource_Request(pure_urls,callback));
 	}
 
 	function define(paths,callback) {
-		if (!can_define_module_node) {
-			error("Cannot define module");
-		}
-
-		var node = can_define_module_node;
-
-		node.dependancies = paths;
-		node.callback = callback;
-		can_define_module_node = undefined;
-
-		_import_(paths,on_module_defined.bind(undefined,node));
-		check_active_requests();
+		
 	}
 
 	return {
@@ -293,3 +377,5 @@ var resource = function() {
 	};
 
 }();
+
+window.define = resource.define;
