@@ -1,14 +1,12 @@
-/*
-	todo:
-		- finish class_extends
-		- specify main through attribute
-		- enable code inspection through attribute
-		- enable cyclic dependency checks through attribute
-*/
-
 var resource = function() {
 
 	"use strict";
+
+	var config = {
+		main_src: null,
+		use_cyclic_check: false,
+		use_module_inspection: false
+	};
 
 	var format_regex = new RegExp("%(?:(.)([0-9]+))?([dbxfcs])","g");
 	
@@ -141,6 +139,8 @@ var resource = function() {
 	}
 
 	function class_extends(base,constructor,prototype,properties) {
+		var bundled_constructor = null;
+		
 		if (typeof(base) === "array") {
 			for (var i = 0; i < base.length; ++i) {
 				var base_prototype = base[i].prototype;
@@ -151,11 +151,37 @@ var resource = function() {
 					}
 				}
 			}
+
+			bundled_constructor = function() {
+				for (var i = 0; i < base.length; ++i) {
+					base[i].apply(this,arguments);
+				}
+
+				constructor.apply(this,arguments);
+			}
+
+			bundled_constructor.super = base;
 		} else {
 			for (var property in base.prototype) {
-				if (
+				if (prototype[property] === undefined) {
+					prototype[property] = base.prototype[property];
+				}
 			}
+
+			bundled_constructor = function() {
+				base.apply(this,arguments);
+				constructor.apply(this,arguments);
+			}
+
+			bundled_constructor.super = [base];
 		}
+
+		constructor.super = bundled_constructor.super;
+		prototype.super = bundled_constructor.super;
+		bundled_constructor.prototype = prototype;
+		constructor.prototype = prototype;
+
+		return bundled_constructor;
 	}
 
 	function Resource_Node(url,get) {
@@ -166,7 +192,8 @@ var resource = function() {
 		this.status = false;
 		this.export = null;
 		this.dependencies = [];
-		this.dependants = 0;
+		this.dependents = 0;
+		this.temp_dependents = 0;
 	}
 
 	var resource_node_graph = {};
@@ -198,7 +225,49 @@ var resource = function() {
 		request.callback.apply(null,exports);
 	}
 
+
+	function check_for_cyclic_dependencies() {
+		var undepended_nodes = [];
+		var total_connections = 0;
+
+		for (var url in resource_node_graph) {
+			var node = resource_node_graph[url];
+
+			node.temp_dependents = node.dependents;
+			total_connections += node.dependents;
+
+			if (!node.dependents) {
+				undepended_nodes.push(node);
+			}
+		}
+
+		while(undepended_nodes.length) {
+			var node = undepended_nodes.pop();
+
+			for (var i = 0; i < node.dependencies.length; ++i) {
+				var dependent_node = resource_node_graph[node.dependencies[i]];
+
+				if (dependent_node) {
+					--dependent_node.temp_dependents;
+					--total_connections;
+
+					if (!dependent_node.temp_dependents) {
+						undepended_nodes.push(dependent_node);
+					}
+				}
+			}
+		}
+
+		if (total_connections) {
+			error("cyclic dependency detected");
+		}
+	}
+
 	function check_active_requests() {
+		if (config.use_cyclic_check) {
+			check_for_cyclic_dependencies();
+		}
+		
 		check_active_requests_loop:
 		for (var i = 0; i < resource_active_requests.length; ++i) {
 			var request = resource_active_requests[i];
@@ -365,8 +434,11 @@ var resource = function() {
 
 		_import_(
 			next_module_node_urls,
-			on_js_module_request_done.bind(node)
+			on_js_module_request_done.bind(node),
+			true
 		);
+
+		check_active_requests();
 	}
 
 	function on_js_module_code_loaded(node,code) {
@@ -387,14 +459,24 @@ var resource = function() {
 	function create_js_module_node(url) {
 		var node = new Resource_Node(url,get_export);
 
-		ajax(
-			"GET",
-			"text/plain; charset=utf-8",
-			"text",
-			url,
-			null,
-			on_js_module_code_loaded.bind(null,node)
-		);
+		if (config.use_module_inspection) {
+			ajax(
+				"GET",
+				"text/plain; charset=utf-8",
+				"text",
+				url,
+				null,
+				on_js_module_code_loaded.bind(null,node)
+			);
+		} else {
+			var tag = document.createElement("script");
+
+			tag.type = "text/javascript";
+			tag.onload = on_js_module_define_done.bind(null,node);
+			tag.src = url;
+
+			document.head.append(tag);
+		}
 
 		return node;
 	}
@@ -411,7 +493,7 @@ var resource = function() {
 		"js_module": {extensions: ["js"], create_node: create_js_module_node}
 	};
 
-	function _import_(urls,callback) {
+	function _import_(urls,callback,is_module) {
 		if (!urls.length) {
 			callback();
 			return;
@@ -458,11 +540,44 @@ var resource = function() {
 				resource_node_graph[url] = type.create_node(url);
 			}
 
+			if (is_module) {
+				++resource_node_graph[url].dependents;
+			}
+
 			pure_urls.push(url);
 		}
 
 		resource_active_requests.push(new Resource_Request(pure_urls,callback));
 	}
+
+	void function() {
+		var scripts = document.getElementsByTagName("script");
+
+		for (var i = 0; i < scripts.length; ++i) {
+			var script = scripts[i];
+			var src_attribute = script.getAttribute("src");
+
+			if (src_attribute && src_attribute.indexOf("resource.js") !== -1) {
+				for (var key in config) {
+					var value =  script.getAttribute(key)
+						  || script.hasAttribute(key);
+
+					if (value) {
+						config[key] = value;
+					}
+				}
+			}
+		}
+
+		if (config.main_src) {
+			var script = document.createElement("script");
+			
+			script.type = "text/javascript";
+			script.src = config.main_src;
+
+			document.head.append(script);
+		}
+	}();
 
 	return {
 		format_string: format_string,
