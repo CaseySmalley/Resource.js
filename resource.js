@@ -489,7 +489,7 @@ var resource = function() {
 		"audio": {extensions: ["mp3","ogg","wav"], create_node: create_blob_node.bind(null,"audio")},
 		"video": {extensions: ["mp4","avi"], create_node: create_blob_node.bind(null,"video")},
 		"css": {extensions: ["css"], create_node: create_css_node},
-		"slc_module": {extensions: ["slc"], create_node: null},
+		"slc_module": {extensions: ["slc","c"], create_node: null},
 		"js_module": {extensions: ["js"], create_node: create_js_module_node}
 	};
 
@@ -556,11 +556,13 @@ var resource = function() {
 		for (var i = 0; i < scripts.length; ++i) {
 			var script = scripts[i];
 			var src_attribute = script.getAttribute("src");
+			var hyphen_regex = new RegExp("_","g");
 
 			if (src_attribute && src_attribute.indexOf("resource.js") !== -1) {
 				for (var key in config) {
-					var value =  script.getAttribute(key)
-						  || script.hasAttribute(key);
+					var attribute_key = key.replace(hyphen_regex,"-");
+					var value =  script.getAttribute(attribute_key)
+						  || script.hasAttribute(attribute_key);
 
 					if (value) {
 						config[key] = value;
