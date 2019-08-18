@@ -29,6 +29,7 @@ var resource = function() {
 
 	function init_args(new_args) {
 		args = new_args;
+		args_current = 0;
 	}
 
 	function get_arg(type) {
