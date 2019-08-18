@@ -21,8 +21,31 @@ var resource = function() {
 	var config = {
 		main_src: null,
 		use_cyclic_check: false,
-		use_module_inspection: false
+		use_module_inspection: false,
 	};
+
+	var args = null;
+	var args_current = 0;
+
+	function init_args(new_args) {
+		args = new_args;
+	}
+
+	function get_arg(type) {
+		if (!args || args_current === args.length) {
+			return undefined;
+		}
+
+		var arg = args[args_current];
+		var is_string = typeof(type) === "string";
+
+		if ((is_string && typeof(arg) === type) || (!is_string && arg instanceof type)) {
+			++args_current;
+			return arg;
+		} else {
+			return undefined;
+		}
+	}
 
 	var format_regex = new RegExp("%(?:(.)([0-9]+))?([dbxfcs])","g");
 	
@@ -200,17 +223,22 @@ var resource = function() {
 		return bundled_constructor;
 	}
 
-	function Resource_Node(url,get) {
-		this.url = url;
-		this.get = get;
-		this.type = null;
-		this.callback = null;
-		this.status = false;
-		this.export = null;
-		this.dependencies = [];
-		this.dependents = 0;
-		this.temp_dependents = 0;
-	}
+	var Resource_Node = _class_(
+		function(id,url,get) {
+			this.id = id;
+			this.url = url;
+			this.get = get;
+			this.type = null;
+			this.callback = null;
+			this.status = false;
+			this.export = null;
+			this.dependencies = [];
+			this.dependents = 0;
+			this.temp_dependents = 0;
+		},{
+			
+		}
+	);
 
 	var resource_node_graph = {};
 	
@@ -308,7 +336,7 @@ var resource = function() {
 
 	function on_text_loaded(node,text) {
 		if (!text) {
-			error("couldn't load text '%s'",node.url);
+			error("couldn't load text '%s'",node.id);
 		}
 
 		node.status = true;
@@ -317,14 +345,14 @@ var resource = function() {
 		check_active_requests();
 	}
 
-	function create_text_node(url) {
-		var node = new Resource_Node(url,get_export);
+	function create_text_node(id,url) {
+		var node = new Resource_Node(id,url,get_export);
 
 		ajax(
 			"GET",
 			"text/plain; charset=utf-8",
 			"text",
-			url,
+			id,
 			null,
 			on_text_loaded.bind(null,node)
 		);
@@ -338,7 +366,7 @@ var resource = function() {
 
 	function on_json_loaded(node,json) {
 		if (!json) {
-			error("couldn't load json '%s'",node.url);
+			error("couldn't load json '%s'",node.id);
 		}
 
 		node.status = true;
@@ -347,14 +375,14 @@ var resource = function() {
 		check_active_requests();
 	}
 
-	function create_json_node(url) {
-		var node = new Resource_Node(url,get_json_export);
+	function create_json_node(id,url) {
+		var node = new Resource_Node(id,url,get_json_export);
 
 		ajax(
 			"GET",
 			"text/plain; charset=utf-8",
 			"text",
-			url,
+			id,
 			null,
 			on_json_loaded.bind(null,node)
 		);
@@ -372,7 +400,7 @@ var resource = function() {
 
 	function on_blob_loaded(node,blob) {
 		if (!blob) {
-			error("couldn't load blob '%s'",node.url);
+			error("couldn't load blob '%s'",node.id);
 		}
 
 		node.status = true;
@@ -381,15 +409,15 @@ var resource = function() {
 		check_active_requests();
 	}
 
-	function create_blob_node(type,url) {
-		var node = new Resource_Node(url,get_blob_export);
+	function create_blob_node(id,type,url) {
+		var node = new Resource_Node(id,url,get_blob_export);
 		node.type = type;
 
 		ajax(
 			"GET",
 			"*/*",
 			"blob",
-			url,
+			id,
 			null,
 			on_blob_loaded.bind(null,node)
 		);
@@ -399,7 +427,7 @@ var resource = function() {
 
 	function on_css_loaded(node,css) {
 		if (!css) {
-			error("couldn't load css '%s'",node.url);
+			error("couldn't load css '%s'",node.id);
 		}
 
 		node.status = true;
@@ -408,13 +436,13 @@ var resource = function() {
 		check_active_requests();
 	}
 
-	function create_css_node(url) {
-		var node = new Resource_Node(url,get_export);
+	function create_css_node(id,url) {
+		var node = new Resource_Node(id,url,get_export);
 		var tag = document.createElement("link");
 
 		tag.rel = "stylesheet";
 		tag.type = "text/css";
-		tag.href = url;
+		tag.href = id;
 		tag.onload = on_css_loaded.bind(null,node,true);
 		tag.onerror = on_css_loaded.bind(null,node,false);
 
@@ -430,28 +458,33 @@ var resource = function() {
 		check_active_requests();
 	}
 
-	var next_module_node_urls = null;
+	var next_module_id = null;
+	var next_module_node_ids = null;
 	var next_module_node_callback = null;
 
-	function define(urls,callback) {
-		next_module_node_urls = urls;
-		next_module_node_callback = callback;
+	function define() {
+		init_args(arguments);
+		next_module_id = get_arg("string");
+		next_module_node_ids = get_arg(Array) || [];
+		next_module_node_callback = get_arg("function");
 	}
 
+	define.amd = {};
+
 	function on_js_module_define_done(node) {
-		if (!next_module_node_urls
+		if (!next_module_node_ids
 		||  !next_module_node_callback)
 		{
-			error("Improper module definition for '%s'",node.url);
+			error("Improper module definition for '%s'",node.id);
 		}
 
-		node.dependencies = next_module_node_urls;
+		node.dependencies = next_module_node_ids;
 		node.callback = next_module_node_callback;
 
 		_import_(
-			next_module_node_urls,
+			next_module_node_ids,
 			on_js_module_request_done.bind(node),
-			true
+			node.url
 		);
 
 		check_active_requests();
@@ -459,7 +492,7 @@ var resource = function() {
 
 	function on_js_module_code_loaded(node,code) {
 		if (!code) {
-			error("couldn't load js module '%s'",node.url);
+			error("couldn't load js module '%s'",node.id);
 		}
 
 		var blob = new Blob([code],{ type: "text/javascript" });
@@ -472,15 +505,15 @@ var resource = function() {
 		document.head.append(tag);
 	}
 
-	function create_js_module_node(url) {
-		var node = new Resource_Node(url,get_export);
+	function create_js_module_node(id,url) {
+		var node = new Resource_Node(id,url,get_export);
 
 		if (config.use_module_inspection) {
 			ajax(
 				"GET",
 				"text/plain; charset=utf-8",
 				"text",
-				url,
+				id,
 				null,
 				on_js_module_code_loaded.bind(null,node)
 			);
@@ -489,7 +522,7 @@ var resource = function() {
 
 			tag.type = "text/javascript";
 			tag.onload = on_js_module_define_done.bind(null,node);
-			tag.src = url;
+			tag.src = id;
 
 			document.head.append(tag);
 		}
@@ -497,7 +530,7 @@ var resource = function() {
 		return node;
 	}
 
-	var import_type_regex = new RegExp("\\.([a-zA-Z0-9_]+)$","");
+	var import_regex = new RegExp("^(?:(.*)[\\/])?([a-zA-Z\-_]+)(?:\.([a-zA-Z_]+))?$","");
 	var import_types = {
 		"text": {extensions: ["txt"], create_node: create_text_node},
 		"json": {extensions: ["json"], create_node: create_json_node},
@@ -509,26 +542,68 @@ var resource = function() {
 		"js_module": {extensions: ["js"], create_node: create_js_module_node}
 	};
 
-	function _import_(urls,callback,is_module) {
-		if (!urls.length) {
+	var id_seperator_regex = new RegExp("[\\\/]","");
+
+	function parse_id(url,id) {
+		var id_tokens = id.split(id_seperator_regex);
+		var url_tokens = null;
+
+		if (url && (id_tokens[0] === "." || id_tokens[0] === "..")) {
+			url_tokens = url.split(id_seperator_regex);
+		} else {
+			url_tokens = [];
+		}
+
+		for (var i = 0; i < id_tokens.length; ++i) {
+			var token = id_tokens[i];
+
+			switch(token) {
+				case ".":
+					
+				break;
+				
+				case "..":
+					url_tokens.pop();
+				break;
+
+				default:
+					url_tokens.push(token);
+				break;
+			}
+		}
+
+		return url_tokens.join("/");
+	}
+
+	function _import_(ids,callback,module_url) {
+		if (!ids.length) {
 			callback();
 			return;
 		}
 
 		var pure_urls = [];
 
-		for (var i = 0; i < urls.length; ++i) {
-			var url = urls[i];
-			var type = import_types[url];
-
+		for (var i = 0; i < ids.length; ++i) {
+			var id = ids[i];
+			var type = import_types[id];
+			
 			if (type) {
-				url = urls[++i];
-			} else {
-				var match = url.match(import_type_regex);
+				id = ids[++i];
+			}
+		
+			var match = parse_id(module_url,id).match(import_regex);
+			
+			if (!match) {
+				error("Invalid resource ID '%s'",id);
+			}
 
-				if (match) {
-					var extension = match[1].toLowerCase();
+			var node_id = match[0];
+			var node_url = match[1];
+			var node_name = match[2];
+			var node_extension = match[3];
 
+			if (!type) {
+				if (node_extension) {
 					import_types_loop:
 					for (var import_type_key in import_types) {
 						var import_type = import_types[import_type_key];
@@ -543,24 +618,22 @@ var resource = function() {
 						
 					}
 				} else {
-					url += ".js";
+					node_id += ".js";
 					type = import_types["js_module"];
 				}
 			}
 
-			if (!url) {
-				error("Missing import URL");
-			} else if (!type) {
+			if (!type) {
 				error("Unsupported import type");
-			} else if (!resource_node_graph[url]) {
-				resource_node_graph[url] = type.create_node(url);
+			} else if (!resource_node_graph[node_id]) {
+				resource_node_graph[node_id] = type.create_node(node_id,node_url);
 			}
 
-			if (is_module) {
-				++resource_node_graph[url].dependents;
+			if (module_url) {
+				++resource_node_graph[node_id].dependents;
 			}
 
-			pure_urls.push(url);
+			pure_urls.push(node_id);
 		}
 
 		resource_active_requests.push(new Resource_Request(pure_urls,callback));
@@ -568,13 +641,13 @@ var resource = function() {
 
 	void function() {
 		var scripts = document.getElementsByTagName("script");
+		var hyphen_regex = new RegExp("_","g");
 
 		for (var i = 0; i < scripts.length; ++i) {
 			var script = scripts[i];
 			var src_attribute = script.getAttribute("src");
-			var hyphen_regex = new RegExp("_","g");
 
-			if (src_attribute && src_attribute.indexOf("resource.js") !== -1) {
+			if (src_attribute && src_attribute.toLowerCase().indexOf("resource.js") !== -1) {
 				for (var key in config) {
 					var attribute_key = key.replace(hyphen_regex,"-");
 					var value =  script.getAttribute(attribute_key)
@@ -598,6 +671,8 @@ var resource = function() {
 	}();
 
 	return {
+		init_args: init_args,
+		get_arg: get_arg,
 		format_string: format_string,
 		log: log,
 		warn: warn,
