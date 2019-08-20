@@ -224,6 +224,37 @@ var resource = function() {
 		return bundled_constructor;
 	}
 
+	var could_derrive_from = [];
+
+	function is_derrived_from(base,constructor) {
+		if (!constructor.super) {
+			return false;
+		}
+
+		could_derrive_from.length = 0;
+
+		for (var i = 0; i < constructor.super.length; ++i) {
+			could_derrive_from.push(constructor.super[i]);
+		}
+
+		while(could_derrive_from.length) {
+			var current = could_derrive_from.pop();
+			var _super = current.super;
+
+			if (current === base) {
+				return true;
+			}
+
+			if (_super) {
+				for (var i = 0; i < _super.length; ++i) {
+					could_derrive_from.push(_super[i]);
+				}
+			}
+		}
+
+		return false;
+	}
+
 	var Resource_Node = _class_(
 		function(id,url,get) {
 			this.id = id;
@@ -681,6 +712,7 @@ var resource = function() {
 		ajax: ajax,
 		class: _class_,
 		class_extends: class_extends,
+		is_derrived_from: is_derrived_from,
 		import: _import_,
 		define: define
 	};
