@@ -142,20 +142,24 @@ var resource = function() {
 		throw format_string.apply(undefined,arguments);
 	}
 
-	function ajax_onreadystatechange(callback) {
+	function ajax_onreadystatechange(onload,onerror) {
 		if (this.readyState === 4) {
 			if (this.status === 200) {
-				callback(this.response);
+				onload(this.response);
 			} else {
-				callback(null);
+				if (onerror) {
+					onerror(this.status);
+				} else {
+					callback();
+				}
 			}
 		}
 	}
 
-	function ajax(method,mime_type,response_type,url,data,callback) {
+	function ajax(method,mime_type,response_type,url,data,onload,onerror) {
 		var request = new XMLHttpRequest();
 
-		request.onreadystatechange = ajax_onreadystatechange.bind(request,callback);
+		request.onreadystatechange = ajax_onreadystatechange.bind(request,onload,onerror);
 		request.responseType = response_type;
 		request.overrideMimeType(mime_type);
 		request.open(method,url,true);
