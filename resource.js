@@ -168,95 +168,42 @@ var resource = function() {
 		return request;
 	}
 
-	function _class_(constructor,prototype,properties) {
-		if (properties) {
+	function object_assign(object,properties) {
+		if (Object.assign) {
+			return Object.assign(object,properties);
+		} else {
 			for (var property in properties) {
-				constructor[property] = properties[property];
+				object[property] = properties[property];
 			}
+
+			return object;
 		}
-		
-		constructor.super = null;
-		prototype.super = null;
-		constructor.prototype = prototype;
+	}
+
+	function _class_(constructor,prototype_properties,constructor_properties) {
+		object_assign(constructor.prototype,prototype_properties);
+
+		if (constructor_properties) {
+			object_assign(constructor,constructor_properties);
+		}
 
 		return constructor;
 	}
 
-	function class_extends(base,constructor,prototype,properties) {
-		var bundled_constructor = null;
-		
-		if (typeof(base) === "array") {
-			for (var i = 0; i < base.length; ++i) {
-				var base_prototype = base[i].prototype;
+	function class_extends(base,constructor,prototype_properties,constructor_properties) {
+		if (base instanceof Array) {
+			constructor.prototype = Object.create(base[0].prototype);
+			constructor.prototype.constructor = constructor;
 
-				for (var property in base_prototype) {
-					if (prototype[property] === undefined) {
-						prototype[property] = base_prototype[property];
-					}
-				}
+			for (var i = 1; i < base.length; ++i) {
+				object_assign(constructor.prototype,base[i].prototype);
 			}
-
-			bundled_constructor = function() {
-				for (var i = 0; i < base.length; ++i) {
-					base[i].apply(this,arguments);
-				}
-
-				constructor.apply(this,arguments);
-			}
-
-			bundled_constructor.super = base;
 		} else {
-			for (var property in base.prototype) {
-				if (prototype[property] === undefined) {
-					prototype[property] = base.prototype[property];
-				}
-			}
-
-			bundled_constructor = function() {
-				base.apply(this,arguments);
-				constructor.apply(this,arguments);
-			}
-
-			bundled_constructor.super = [base];
+			constructor.prototype = Object.create(base.prototype);
+			constructor.prototype.constructor = constructor;
 		}
 
-		constructor.super = bundled_constructor.super;
-		prototype.super = bundled_constructor.super;
-		bundled_constructor.prototype = prototype;
-		constructor.prototype = prototype;
-
-		return bundled_constructor;
-	}
-
-	var could_derrive_from = [];
-
-	function is_derrived_from(base,constructor) {
-		if (!constructor.super) {
-			return false;
-		}
-
-		could_derrive_from.length = 0;
-
-		for (var i = 0; i < constructor.super.length; ++i) {
-			could_derrive_from.push(constructor.super[i]);
-		}
-
-		while(could_derrive_from.length) {
-			var current = could_derrive_from.pop();
-			var _super = current.super;
-
-			if (current === base) {
-				return true;
-			}
-
-			if (_super) {
-				for (var i = 0; i < _super.length; ++i) {
-					could_derrive_from.push(_super[i]);
-				}
-			}
-		}
-
-		return false;
+		return _class_(constructor,prototype_properties,constructor_properties);
 	}
 
 	var Resource_Node = _class_(
@@ -716,7 +663,6 @@ var resource = function() {
 		ajax: ajax,
 		class: _class_,
 		class_extends: class_extends,
-		is_derrived_from: is_derrived_from,
 		import: _import_,
 		define: define
 	};
